@@ -557,14 +557,7 @@ namespace fefu
 
         // LWG 2059.
         iterator erase(iterator position) {
-            size_type index = position.position;
-            if (index < count_buckets && status_table[index] == 1) {
-                status_table[index] = -1;
-                non_empty_buckets--;
-                (data + index)->~value_type();
-                return position++;
-            }
-            return end();
+            return erase(static_cast<const_iterator>(position));
         }
         //@}
 
