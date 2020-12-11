@@ -461,53 +461,11 @@ namespace fefu
         *  Insertion requires amortized constant time.
         */
         std::pair<iterator, bool> insert(const value_type& x) {
-            if (count_buckets == 0) {
-                rehash((count_buckets + 1) * 2);
-            }
-            bool check = true;
-            size_type index = hash(x.first) % count_buckets;
-            for (size_type next = 0; next < count_buckets; next++) {
-                index = (index + next) % count_buckets;
-                if (data[index].first == x.first && status_table[index] == 1) {
-                    check = false;
-                    break;
-                }
-                if (status_table[index] == -1 || status_table[index] == 0) {
-                    non_empty_buckets++;
-                    new (data + index) value_type(x);
-                    status_table[index] = 1;
-                    break;
-                }
-            }
-            if (load_factor() >= max_load_factor()) {
-                rehash(2 * count_buckets);
-            }
-            return std::make_pair(iterator(data, status_table, index), check);
+            return support_insert(value_type(x));
         }
 
         std::pair<iterator, bool> insert(value_type&& x) {
-            if (count_buckets == 0) {
-                rehash((count_buckets + 1) * 2);
-            }
-            bool check = true;
-            size_type index = hash(x.first) % count_buckets;
-            for (size_type next = 0; next < count_buckets; next++) {
-                index = (index + next) % count_buckets;
-                if (data[index].first == x.first && status_table[index] == 1) {
-                    check = false;
-                    break;
-                }
-                if (status_table[index] == -1 || status_table[index] == 0) {
-                    non_empty_buckets++;
-                    new (data + index) value_type(x);
-                    status_table[index] = 1;
-                    break;
-                }
-            }
-            if (load_factor() >= max_load_factor()) {
-                rehash(2 * count_buckets);
-            }
-            return std::make_pair(iterator(data, status_table, index), check);
+            return support_insert(std::move(x));
         }
 
         //@}
@@ -562,23 +520,13 @@ namespace fefu
          */
         template <typename _Obj>
         std::pair<iterator, bool> insert_or_assign(const key_type& k, _Obj&& obj) {
-            auto element = find(k);
-            if (element != end()) {
-                element->second = obj;
-                return std::make_pair(element, true);
-            }
-            return insert(std::make_pair(k, std::forward<_Obj>(obj)));
+            return support_insert_or_assign<_Obj>(key_type(k), std::forward<_Obj>(obj));
         }
 
         // move-capable overload
         template <typename _Obj>
         std::pair<iterator, bool> insert_or_assign(key_type&& k, _Obj&& obj) {
-            auto element = find(k);
-            if (element != end()) {
-                element->second = obj;
-                return std::make_pair(element, true);
-            }
-            return insert(std::make_pair(k, std::forward<_Obj>(obj)));
+            return support_insert_or_assign<_Obj>(std::move(k), std::forward<_Obj>(obj));
         }
 
         //@{
@@ -702,12 +650,7 @@ namespace fefu
 
         template<typename _H2, typename _P2>
         void merge(hash_map<K, T, _H2, _P2, Alloc>& source) {
-            for (auto i = source.begin(); i != source.end(); i++) {
-                auto element = insert(*i);
-                if (element.second) {
-                    source.erase(i);
-                }
-            }
+            merge(std::move(source));
         }
 
         template<typename _H2, typename _P2>
@@ -749,25 +692,11 @@ namespace fefu
          *  past-the-end ( @c end() ) iterator.
          */
         iterator find(const key_type& x) {
-            size_type index = hash(x) % count_buckets;
-            for (int next = 0; next < count_buckets; next++) {
-                index = (index + next) % count_buckets;
-                if (status_table[index] == 1 && data[index].first == x) {
-                    return iterator(data, status_table, index);
-                }
-            }
-            return end();
+            return support_find<iterator>(x);
         }
 
         const_iterator find(const key_type& x) const {
-            size_type index = hash(x) % count_buckets;
-            for (int next = 0; next < count_buckets; next++) {
-                index = (index + next) % count_buckets;
-                if (status_table[index] == 1 && data[index].first == x) {
-                    return const_iterator(data, status_table, index);
-                }
-            }
-            return cend();
+            return support_find<const_iterator>(x);
         }
         //@}
 
@@ -807,19 +736,11 @@ namespace fefu
          *  Lookup requires constant time.
          */
         mapped_type& operator[](const key_type& k) {
-            auto element = find(k);
-            if (element == end()) {
-                insert(std::make_pair(k, mapped_type()));
-            }
-            return at(k);
+            return support_operator(key_type(k));
         }
 
         mapped_type& operator[](key_type&& k) {
-            auto element = find(k);
-            if (element == end()) {
-                insert(std::make_pair(k, mapped_type()));
-            }
-            return at(k);
+            return support_operator(std::move(k));
         }
         //@}
 
@@ -898,9 +819,13 @@ namespace fefu
          *  %hash_map maximum load factor.
          */
         void rehash(size_type n) {
-            hash_map table(n);
-            table.insert(begin(), end());
-            *this = table;
+            std::vector<value_type> support(begin(), end());
+            clear();
+            alloc.deallocate(data, count_buckets);
+            count_buckets = n;
+            status_table.resize(count_buckets);
+            data = alloc.allocate(n);
+            insert(support.begin(), support.end());
         }
 
         /**
@@ -939,5 +864,60 @@ namespace fefu
         size_type count_buckets = 0;
         size_type non_empty_buckets = 0;
         float max_load = 0.75;
+
+        mapped_type& support_operator(key_type&& k) {
+            auto element = find(k);
+            if (element == end()) {
+                insert(std::make_pair(k, mapped_type()));
+            }
+            return at(k);
+        }
+
+        template<typename Iter>
+        Iter support_find(const key_type& x) const {
+            size_type index = hash(x) % count_buckets;
+            for (int next = 0; next < count_buckets; next++) {
+                index = (index + next) % count_buckets;
+                if (status_table[index] == 1 && data[index].first == x) {
+                    return Iter(data, status_table, index);
+                }
+            }
+            return Iter(data, status_table, count_buckets);
+        }
+
+        template <typename _Obj>
+        std::pair<iterator, bool> support_insert_or_assign(key_type&& k, _Obj&& obj) {
+            auto element = find(k);
+            if (element != end()) {
+                element->second = obj;
+                return std::make_pair(element, true);
+            }
+            return insert(std::make_pair(k, std::forward<_Obj>(obj)));
+        }
+
+        std::pair<iterator, bool> support_insert(value_type&& x) {
+            if (count_buckets == 0) {
+                rehash((count_buckets + 1) * 2);
+            }
+            bool check = true;
+            size_type index = hash(x.first) % count_buckets;
+            for (size_type next = 0; next < count_buckets; next++) {
+                index = (index + next) % count_buckets;
+                if (data[index].first == x.first && status_table[index] == 1) {
+                    check = false;
+                    break;
+                }
+                if (status_table[index] == -1 || status_table[index] == 0) {
+                    non_empty_buckets++;
+                    new (data + index) value_type(x);
+                    status_table[index] = 1;
+                    break;
+                }
+            }
+            if (load_factor() >= max_load_factor()) {
+                rehash(2 * count_buckets);
+            }
+            return std::make_pair(iterator(data, status_table, index), check);
+        }
     };
 } // namespace fefu
