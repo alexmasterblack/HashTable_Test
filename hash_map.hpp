@@ -217,9 +217,15 @@ namespace fefu
         }
 
         /// Move constructor.
-        hash_map(hash_map&& other) : hash_map() {
-            swap(other);
-        }
+        hash_map(hash_map&& other) :
+            data(std::exchange(other.data, nullptr)),
+            status_table(std::move(other.status_table)),
+            count_buckets(std::exchange(other.count_buckets, 0)),
+            non_empty_buckets(std::exchange(other.non_empty_buckets, 0)),
+            alloc(std::move(other.alloc)),
+            hash(std::move(other.hash)),
+            equal(std::move(other.equal)),
+            max_load(std::move(other.max_load)) {}
 
         /**
          *  @brief Creates an %hash_map with no elements.
@@ -252,10 +258,15 @@ namespace fefu
         *  @param  uset Input %hash_map to move.
         *  @param  a    An allocator object.
         */
-        hash_map(hash_map&& umap, const allocator_type& a) : hash_map() {
-            swap(umap);
-            alloc = a;
-        }
+        hash_map(hash_map&& umap, const allocator_type& a) :
+            alloc(std::move(a)),
+            data(std::exchange(umap.data, nullptr)),
+            status_table(std::move(umap.status_table)),
+            count_buckets(std::exchange(umap.count_buckets, 0)),
+            non_empty_buckets(std::exchange(umap.non_empty_buckets, 0)),
+            hash(std::move(umap.hash)),
+            equal(std::move(umap.equal)),
+            max_load(std::move(umap.max_load)) {}
 
         /**
          *  @brief  Builds an %hash_map from an initializer_list.
@@ -282,6 +293,7 @@ namespace fefu
         /// Move assignment operator.
         hash_map& operator=(hash_map&& other) {
             swap(other);
+            other.clear();
             return *this;
         }
 
